@@ -1,444 +1,379 @@
-Alpine-Spline v0.1
+Scope: v0.1 (Logical Spine) + v0.2 Roadmap (Electrical Spine)
+Audience: Core developers, reviewers, hardware partners
+Non-Goal: Popularity, convenience, feature parity
 
-One-Time Developer Handoff (Immutable Contract)
+0. Why This Document Exists
 
-Read this once. Follow it literally. Do not improvise.
+This project does not fail because of bugs.
+It fails if someone “helps.”
 
-This repository defines a closed, sovereign OS substrate called Alpine-Spline.
-It is not a distro, not a framework, and not a playground.
+Most operating systems collapse because well-meaning developers slide convenience into places where authority used to be. That slide is subtle, incremental, and usually justified as “just one exception.”
 
-Your task as a developer is to materialize the contract, not reinterpret it.
+This document exists to explain why we do things differently, and to permanently block the instincts that will try to undo the architecture.
 
-If something feels missing, ambiguous, or inconvenient, that is intentional.
-Ask before changing anything structural.
+If a change violates the principles below, it is not Alpine-Spine, even if it compiles.
 
 
-0. What You Are Building (Plain Language)
+1. The Core Problem We Are Solving (Not the One People Assume)
 
-Alpine-Spline is an immutable Alpine Linux Spine that boots directly into a single orchestrator binary called bay0.
+We are not trying to:
 
-bay0 is PID 1
+Detect malware better
+Patch faster
+Predict attacks
+Out-AI attackers
+Build a “secure desktop”
 
-bay0 is the only authority
 
-Everything else is expendable
+Those are Long Machine goals.
 
+The real problem:
 
-The system is designed to:
+Persistence + time + shared state = eventual compromise
+Every modern exploit chain depends on at least one of:
+Surviving a reboot
+Sharing a kernel namespace
+Accumulating privileges over time
+Waiting quietly
 
-survive crashes, power loss, partial updates, and hardware failure
 
-reconcile its own state on every boot
+The Spine deletes all four assumptions.
 
-prioritize user focus and responsiveness over background work
 
-treat AI as a shared, constrained system organ, not an app
+2. Architectural Philosophy: The Short Machine
 
+Long Machine (Industry Default)
 
-If the system fails, it must fail loud, explain why, and recover.
+Infinite features
+Infinite patches
+Infinite trust
+Infinite patience
 
-Silence is failure.
 
+Short Machine (Spine)
 
-1. Non-Negotiable v0 Rules
+Minimal surface
+Minimal time
+Minimal trust
+No patience
 
-These rules are not suggestions.
 
-1. Path A only
-Alpine kernel + initramfs.
-No host kernel passthrough committed to the repo.
+We do not try to survive attacks.
+We refuse to host them.
 
+3. v0.1: The Logical Spine (What Exists Today)
 
-2. bay0 is PID 1
-No systemd. No supervisord. No “just for now” init hacks.
+v0.1 is deliberately portable, boring, and brutal.
 
+3.1 Immutable Substrate
 
-3. Single deployable artifact
-bay0 must be deployable as a single file into initramfs
-(static musl preferred; minimal shared libs acceptable only if justified).
+The OS is a single SquashFS image
+Read-only by design
+Verified by hash on boot
+No mutable root
+No package manager
+No background services
+No cron
+No update daemon
 
 
-4. Observability > Speed
-A 5-second boot that explains itself beats a 2-second silent boot.
+Why this matters:
+Most malware persistence relies on writing somewhere.
+We removed “somewhere.”
 
+> If the image hash changes, the system does not “repair.”
+It dies and reverts.
 
-5. /persist is the only durable state
-Everything else is disposable.
+3.2 bay0 (PID 1) — The Governor
 
+bay0 is not an init system.
+It is a governor.
 
-6. Reconciliation on boot is mandatory
-bay0 must converge reality to intent every boot.
+It:
 
+Owns lifecycle
+Owns persona creation
+Owns freezing/thawing
+Owns I/O delegation
+Owns death
 
-7. No blocking on external tools
-podman, sway, mounts, IO must all be bounded by timeouts.
 
+It does not:
 
-8. Grammar-based namespaces
-No string prefix hacks. User and system namespaces must be unambiguous.
+Run apps
+Parse content
+Inspect files
+Interpret intent
+Make “smart” decisions
 
 
-9. Hermetic builds only
-mkspine.sh must build inside a pinned container image by digest.
+Why this matters:
+Once PID 1 becomes clever, it becomes corruptible.
 
+bay0 reacts to physics, not meaning.
 
-10. If a dev asks “where is the log,” the delivery failed
+3.3 Personas (Execution Islands)
 
+Each Persona is:
+A kernel namespace silo
+Its own PID tree
+Its own mounts
+Its own cgroups
+Its own tmpfs overlay
 
 
-2. Canonical Repository Structure
+No Persona:
 
-This structure is authoritative.
-Do not add top-level directories without explicit approval.
+Shares memory
+Shares IPC
+Shares network
+Shares filesystem state
+Has root on the substrate
 
-/Alpine-Spline
-├── /crates
-│   └── /bay0
-│       └── /src
-│           ├── main.rs         # Entrypoint / CLI dispatch
-│           ├── init.rs         # bay0::init(), early boot, mounts
-│           ├── validate.rs     # bay0 --validate (health feelers)
-│           ├── reconcile.rs    # Desired vs actual convergence
-│           ├── persona.rs      # Persona lifecycle & naming grammar
-│           ├── umbilical.rs    # AI unix socket + SO_PEERCRED checks
-│           ├── pid1.rs         # SIGCHLD reaper, signal handling
-│           └── state/
-│               ├── mod.rs      # Exclusive /persist boundary
-│               ├── db.rs       # SQLite access + WAL + migrations
-│               ├── schema.rs   # Schema + versions
-│               ├── nack.rs     # Failed-upgrade memory
-│               ├── time.rs     # Last-known-good time
-│               └── entropy.rs  # Entropy seed read/write (bounded)
-├── /scripts
-│   ├── mkspine.sh              # Hermetic build (pinned digest)
-│   ├── boot-qemu.sh            # Serial-first VM boot
-│   └── mkpersist.sh            # Persist disk creation
-└── /docs
-    ├── HANDOFF.md              # This document
-    └── ARCHITECTURE.md         # Short, non-poetic overview
 
-If code touches /persist outside state/, it is wrong.
+Why this matters:
+Most exploits assume lateral movement.
+There is nowhere to move to.
 
+3.4 tmpfs Overlays (Amnesia by Default)
+Personas write only to RAM unless explicitly allowed.
 
-3. Developer Environment (Host)
+On:
+Freeze
+Exit
+Reboot
+Power loss
 
-You are expected to work on Linux (native or VM).
 
-Required tools:
+Everything disappears.
 
-podman or docker
+Why this matters:
+Malware’s business model is survival.
+We made survival optional and temporary.
 
-qemu-system-x86_64
 
-sgdisk, mkfs.ext4
+3.5 /persist — The State Gate
 
-bash, curl, tar, gzip, cpio
+/persist exists, but it is not ambient.
+No Persona mounts it directly
+All access goes through bay0’s state:: API
+Commits are explicit
+Narrow
+Logged
 
-Rust toolchain (cargo, rustc)
 
+Why this matters:
+State is authority.
+Authority must be rare, visible, and intentional.
 
-If something is missing, install it.
-Do not work around missing tools by changing architecture.
 
+4. The Umbilical (Controlled Reality Transfer)
+There is exactly one way Personas communicate:
 
-4. Hermetic Build: mkspine.sh
+Persona → bay0 → Persona
 
-mkspine.sh is the factory. If it is compromised, everything is compromised.
+Unix socket
 
-Mandatory properties
+Credential-verified
 
-Runs inside a container (podman/docker)
+Explicit push / pull
+No shared folders
+No shared clipboard
+No drag-and-drop
 
-Uses pinned Alpine image by SHA256 digest
 
-Never pulls latest
+Why this matters:
+Shared convenience is how infections propagate.
+The Umbilical forces a conscious boundary crossing.
 
-Produces exactly:
+Yes, it costs one click.
+That click is the wall.
 
-./vmlinuz
+5. The Metabolic Watchdog (v0.1)
+The Watchdog is not security AI.
+It is a thermometer.
 
-./build/spine.img
+5.1 What It Sees
+Only coarse system physics:
+CPU jitter
+Context switch rate
+Memory pressure (PSI)
+I/O cadence
 
 
+No:
 
-Ghost Root requirement
+Files
+Text
+Network payloads
+User data
+Intent
 
-The initramfs must include:
 
-/etc/passwd
+5.2 What It Can Say
 
-/etc/group
+Exactly one integer:
 
-/etc/nsswitch.conf
+0 = Normal
 
+1 = Warn
 
-Even if Alpine is “static,” UID 0 must resolve cleanly.
+2 = Throttle
 
-bay0 injection
+3 = Critical
 
-bay0 must be present in initramfs
 
-/sbin/init must resolve to bay0
+5.3 What bay0 Does
 
-Build must fail if bay0 is missing
+bay0 does not debate.
+State 2 → clamp CPU/I/O
+State 3 → SIGSTOP → purge
 
 
-5. Serial-First Boot Invariant
+Why this matters:
+Content-aware security can be tricked.
+Physics cannot be argued with.
 
-boot-qemu.sh must boot with:
+6. The Principle of Invisible Safety (Linda Test)
 
-console=ttyS0,115200
+If Linda notices security, we failed.
 
-bay0 logs to /dev/console.
+Correct behavior:
+Browser thrashes
+Cursor pauses briefly
 
-If serial output is broken, nothing else is trusted.
+Screen goes black
+Desktop returns
+Files intact
 
+No dialog
+No sermon
+No fear
 
-6. Persist Disk (VM)
 
-mkpersist.sh creates persist.img (ext4, e.g. 10G).
+She blames her finger.
+Not the machine.
 
-In QEMU:
+Security should feel like speed.
 
-attached as virtio-blk
+7. What We Explicitly Do NOT Promise (Audit-Critical)
+We do not guarantee:
 
-appears as /dev/vda
+Availability
 
-mounted by bay0 at /persist
+> The machine chooses death over compromise.
 
 
-All “survival reads” from /persist must:
+Continuous uptime
 
-have hard timeouts (≈200ms)
+> Reboots are a feature.
 
-fail open (“dirty boot”) rather than hang
+Firmware purity
 
+> We assume hostile silicon and remove persistence.
 
+Protection from stolen hardware
 
-7. bay0 Responsibilities (PID 1)
+> Sovereignty is physical as well as logical.
 
-7.1 Signal handling (mandatory)
 
-SIGCHLD: reap all orphans (no zombie leakage)
+These are not omissions.
+They are design choices.
 
-SIGTERM/SIGINT: bounded shutdown
 
-flush entropy seed
+8. v0.2 Roadmap: The Electrical Spine (Why Software Is Not Enough)
 
-write last-known-good time
+v0.1 defeats remote, logical, and automated threats.
 
-checkpoint DB
+v0.2 defeats time-based and physical ghosts.
 
-exit
+8.1 The Problem
 
+Any software governor can be delayed.
+Any delay can be exploited.
 
-bay0 must set:
+8.2 The Fix
 
-oom_score_adj = -1000
+Move final authority out of code and into voltage.
 
-PID 1 must not be killed before the system panics.
 
-7.2 State Bridge (mandatory)
+8.3 Hardware Watchdog (Dead-Man)
 
-Only state::* may touch /persist.
+bay0 must toggle a GPIO every 500 ms
 
-The API must be typed and narrow:
+External WDT monitors pulse
 
-open DB
+Missed pulse → power rail cut
 
-migrate schema
+RAM loses refresh
 
-list personas
+State evaporates
 
-set persona state
+No logs.
+No grace.
+No debate.
 
-read/write NACK registry
+Why this matters:
+You cannot negotiate with a capacitor.
 
-read/write monotonic time
+8.4 v0.2 Scope Reality
+    v0.2 is:
 
-read/write entropy seed
+Device-specific
+Hardware-dependent
 
-append genesis log
+Not portable
+Not universal
+And that is correct.
 
+Electrical sovereignty cannot be abstracted.
 
-SQLite:
+9. The Five Spine Laws (Non-Negotiable)
 
-WAL mode
+1. No persistence without explicit commit
+2. No shared global namespace
+3. No anomaly without purge
+4. No heartbeat without voltage (v0.2)
+5. No trust in software alone
 
-synchronous=NORMAL
+Break one → not Spine.
 
-schema versioned via PRAGMA user_version
 
-migrations run before reconcile
+10. Guidance for Future Developers (Read This Twice)
 
+If you feel the urge to:
 
-8. Reconciliation on Boot (mandatory)
+Add auto-update
 
-On every boot:
+Add background helpers
 
-1. Read desired state from DB
+Add convenience IPC
 
+Add “just one” exception
 
-2. Query actual runtime (podman)
+Add recovery without reboot
 
+Add silent persistence
 
-3. Converge deterministically
 
+Stop.
 
-Rules:
+You are rebuilding the Long Machine.
 
-starting → container may be partial → rm -f → stopped
+The Spine is not missing features.
+It is missing assumptions.
 
-running but missing → stopped
 
-ambiguity → converge to stopped and log why
+11. Final Word
 
-The system must never trust half-states.
+Most systems try to survive attacks.
+The Spine refuses to host them.
 
+Most systems optimize for uptime.
+The Spine optimizes for truth.
 
-9. Persona Naming Grammar (mandatory)
+Most systems trust vendors.
+The Spine trusts physics.
 
-No simple prefixes.
-
-Use semantic grammar:
-
-system tenants: sys://ai
-
-user personas: p://work
-
-
-Internal mapping (example):
-
-sys__ai
-
-p__work
-
-
-User input must be validated:
-
-alphanumeric only
-
-no empty segments
-
-grammar enforced before DB write
-
-
-10. bay0 --validate (Health Feelers)
-
-This command is mandatory.
-
-It must be:
-
-fast
-
-non-destructive
-
-decisive
-
-
-Minimum checks
-1. Freezer test
-
-start test container
-
-confirm CPU burn
-
-pause → CPU drops to zero
-
-unpause → CPU resumes
-
-
-2. Umbilical test
-
-attempt unix socket connect
-
-verify peer credentials (SO_PEERCRED)
-
-fail if socket is fake or stale
-
-
-3. Persist test
-
-write/read marker in /persist
-
-enforce timeout
-
-
-4. Log test
-
-append to genesis/validate log
-
-
-Output contract
-
-Single summary: GREEN / YELLOW / RED
-
-Each failure prints:
-
-component
-
-reason
-
-next action (if applicable)
-
-
-11. VM Bring-Up Checklist (Do Not Skip)
-
-1. cargo build --release
-
-
-2. scripts/mkspine.sh
-
-
-3. scripts/mkpersist.sh
-
-
-4. scripts/boot-qemu.sh
-
-
-5. Inside VM: bay0 --validate
-
-
-If validation is not GREEN (or justified YELLOW), stop.
-
-
-
-12. What You Must NOT Do
-
-Do not introduce systemd
-
-Do not add networking to Spine
-
-Do not let personas touch /persist directly
-
-Do not optimize before logging
-
-Do not add new dependencies casually
-
-Do not “improve” architecture without approval
-
-
-
-13. Definition of Done (v0.1)
-
-The work is complete when:
-
-bay0 boots as PID 1
-
-/persist mounts or times out cleanly
-
-reconciliation clears ghosts after hard reboot
-
-bay0 --validate runs and explains failures
-
-no zombie processes accumulate
-
-logs explain every failure path
-
-
-If something breaks now, it is an implementation defect, not a design gap.
-
-
-This document is the contract.
-Follow it. Commit it. Then let the machine speak.
-
+If this makes you uncomfortable, good.
+That discomfort is the wall holding.
